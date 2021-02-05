@@ -99,7 +99,7 @@ var text = {
 
 **Type**: object
 
-**Default value**: dependent on component. [View component defaults](https://github.com/Shopify/buy-button-js/blob/master/src/defaults/components.j)
+**Default value**: dependent on component. [View component defaults](https://github.com/Shopify/buy-button-js/blob/master/src/defaults/components.js)
 
 ### `styles`
 
@@ -269,6 +269,8 @@ var contents = {
   title: true,
   lineItems: true,
   footer: true,
+  note: false,
+  discounts: true,
 },
 ```
 
@@ -282,6 +284,7 @@ var text = {
   total: 'Total',
   currency: 'CAD',
   notice: 'Shipping and discount codes are added at checkout.',
+  noteDescription: 'Special instructions for seller',
 },
 ```
 
@@ -304,7 +307,8 @@ var contents = {
   image: true,
   variantTitle: true,
   title: true,
-  price: true,
+  price: false,
+  priceWithDiscounts: true,
   quantity: true,
   quantityIncrement: true,
   quantityDecrement: true,

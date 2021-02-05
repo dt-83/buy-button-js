@@ -5,6 +5,8 @@ import Checkout from './checkout';
 import windowUtils from '../utils/window-utils';
 import formatMoney from '../utils/money';
 import normalizeConfig from '../utils/normalize-config';
+import browserFeatures from '../utils/detect-features';
+import getUnitPriceBaseUnit from '../utils/unit-price';
 import ProductView from '../views/product';
 import ProductUpdater from '../updaters/product';
 
@@ -80,6 +82,7 @@ export default class Product extends Component {
     this.selectedVariant = {};
     this.selectedOptions = {};
     this.selectedImage = null;
+    this.modalProduct = Boolean(config.modalProduct);
     this.updater = new ProductUpdater(this);
     this.view = new ProductView(this);
   }
@@ -126,6 +129,8 @@ export default class Product extends Component {
     let id;
     let src;
     let srcLarge;
+    let srcOriginal;
+    let altText;
 
     const imageOptions = {
       maxWidth: imageSize,
@@ -141,20 +146,29 @@ export default class Product extends Component {
       id = this.selectedImage.id;
       src = this.props.client.image.helpers.imageForSize(this.selectedImage, imageOptions);
       srcLarge = this.props.client.image.helpers.imageForSize(this.selectedImage, imageOptionsLarge);
+      srcOriginal = this.selectedImage.src;
+      altText = this.imageAltText(this.selectedImage.altText);
     } else if (this.selectedVariant.image == null && this.model.images[0] == null) {
       id = null;
       src = '';
       srcLarge = '';
+      srcOriginal = '';
+      altText = '';
     } else if (this.selectedVariant.image == null) {
       id = this.model.images[0].id;
       src = this.model.images[0].src;
       srcLarge = this.props.client.image.helpers.imageForSize(this.model.images[0], imageOptionsLarge);
+      srcOriginal = this.model.images[0].src;
+      altText = this.imageAltText(this.model.images[0].altText);
     } else {
       id = this.selectedVariant.image.id;
       src = this.props.client.image.helpers.imageForSize(this.selectedVariant.image, imageOptions);
       srcLarge = this.props.client.image.helpers.imageForSize(this.selectedVariant.image, imageOptionsLarge);
+      srcOriginal = this.selectedVariant.image.src;
+      altText = this.imageAltText(this.selectedVariant.image.altText);
     }
-    return {id, src, srcLarge};
+
+    return {id, src, srcLarge, srcOriginal, altText};
   }
 
   /**
@@ -165,7 +179,7 @@ export default class Product extends Component {
     if (!this.selectedVariant) {
       return '';
     }
-    return formatMoney(this.selectedVariant.price, this.globalConfig.moneyFormat);
+    return formatMoney(this.selectedVariant.priceV2.amount, this.globalConfig.moneyFormat);
   }
 
   /**
@@ -173,10 +187,48 @@ export default class Product extends Component {
    * @return {String}
    */
   get formattedCompareAtPrice() {
-    if (!this.selectedVariant) {
+    if (!this.hasCompareAtPrice) {
       return '';
     }
-    return formatMoney(this.selectedVariant.compareAtPrice, this.globalConfig.moneyFormat);
+    return formatMoney(this.selectedVariant.compareAtPriceV2.amount, this.globalConfig.moneyFormat);
+  }
+
+  /**
+   * get whether unit price string should be displayed
+   * @return {Boolean}
+   */
+
+  get showUnitPrice() {
+    if (!this.selectedVariant || !this.selectedVariant.unitPrice || !this.options.contents.unitPrice) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * get formatted variant unit price amount based on moneyFormat
+   * @return {String}
+   */
+  get formattedUnitPrice() {
+    if (!this.showUnitPrice) {
+      return '';
+    }
+
+    return formatMoney(this.selectedVariant.unitPrice.amount, this.globalConfig.moneyFormat);
+  }
+
+  /**
+   * get formatted variant unit price base unit
+   * @return {String}
+   */
+  get formattedUnitPriceBaseUnit() {
+    if (!this.showUnitPrice) {
+      return '';
+    }
+
+    const unitPriceMeasurement = this.selectedVariant.unitPriceMeasurement;
+
+    return getUnitPriceBaseUnit(unitPriceMeasurement.referenceValue, unitPriceMeasurement.referenceUnit);
   }
 
   /**
@@ -201,7 +253,13 @@ export default class Product extends Component {
       quantityClass: this.quantityClass,
       priceClass: this.priceClass,
       formattedPrice: this.formattedPrice,
+      priceAccessibilityLabel: this.priceAccessibilityLabel,
+      hasCompareAtPrice: this.hasCompareAtPrice,
       formattedCompareAtPrice: this.formattedCompareAtPrice,
+      compareAtPriceAccessibilityLabel: this.compareAtPriceAccessibilityLabel,
+      showUnitPrice: this.showUnitPrice,
+      formattedUnitPrice: this.formattedUnitPrice,
+      formattedUnitPriceBaseUnit: this.formattedUnitPriceBaseUnit,
       carouselIndex: 0,
       carouselImages: this.carouselImages,
     });
@@ -214,12 +272,13 @@ export default class Product extends Component {
         src: image.src,
         carouselSrc: this.props.client.image.helpers.imageForSize(image, {maxWidth: 100, maxHeight: 100}),
         isSelected: image.id === this.currentImage.id,
+        altText: this.imageAltText(image.altText),
       };
     });
   }
 
   get buttonClass() {
-    const disabledClass = this.buttonEnabled ? '' : this.classes.disabled;
+    const disabledClass = this.buttonEnabled ? '' : this.classes.product.disabled;
     const quantityClass = this.options.contents.buttonWithQuantity ? this.classes.product.buttonBesideQty : '';
     return `${disabledClass} ${quantityClass}`;
   }
@@ -276,7 +335,7 @@ export default class Product extends Component {
   }
 
   get priceClass() {
-    return this.selectedVariant && this.selectedVariant.compareAtPrice ? this.classes.product.loweredPrice : '';
+    return this.hasCompareAtPrice ? this.classes.product.loweredPrice : '';
   }
 
   get isButton() {
@@ -326,9 +385,11 @@ export default class Product extends Component {
       return '';
     }
 
-    return this.decoratedOptions.reduce((acc, option) => {
+    const uniqueId = Date.now();
+    return this.decoratedOptions.reduce((acc, option, index) => {
       const data = merge(option, this.options.viewData);
       data.classes = this.classes;
+      data.selectId = `Option-${uniqueId}-${index}`;
       data.onlyOption = (this.model.options.length === 1);
       return acc + this.childTemplate.render({data});
     }, '');
@@ -407,16 +468,22 @@ export default class Product extends Component {
    * @return {Object}
    */
   get trackingInfo() {
-    if (this.selectedVariant) {
-      return {
-        id: this.id,
-        name: this.selectedVariant.productTitle,
-        sku: null,
-        price: this.selectedVariant.price,
-      };
-    } else {
-      return {};
-    }
+    const variant = this.selectedVariant || this.model.variants[0];
+    const contents = this.options.contents;
+    const contentString = Object.keys(contents).filter((key) => contents[key]).toString();
+
+    return {
+      id: this.model.id,
+      name: this.model.title,
+      variantId: variant.id,
+      variantName: variant.title,
+      price: variant.priceV2.amount,
+      destination: this.options.buttonDestination,
+      layout: this.options.layout,
+      contents: contentString,
+      checkoutPopup: this.config.cart.popup,
+      sku: null,
+    };
   }
 
   /**
@@ -427,10 +494,22 @@ export default class Product extends Component {
     const variant = this.selectedVariant;
     return {
       id: variant.id,
-      name: variant.productTitle,
-      quantity: this.model.selectedQuantity,
+      name: variant.title,
+      productId: this.model.id,
+      productName: this.model.title,
+      quantity: this.selectedQuantity,
+      price: variant.priceV2.amount,
       sku: null,
-      price: variant.price,
+    };
+  }
+
+  /**
+   * get info about product to be sent to tracker
+   * @return {Object}
+   */
+  get productTrackingInfo() {
+    return {
+      id: this.model.id,
     };
   }
 
@@ -539,9 +618,9 @@ export default class Product extends Component {
    * @return {Promise} promise resolving to model data.
    */
   sdkFetch() {
-    if (this.storefrontId && Array.isArray(this.storefrontId)) {
+    if (this.storefrontId && Array.isArray(this.storefrontId) && this.storefrontId[0]) {
       return this.props.client.product.fetch(this.storefrontId[0]);
-    } else if (this.storefrontId) {
+    } else if (this.storefrontId && !Array.isArray(this.storefrontId)) {
       return this.props.client.product.fetch(this.storefrontId);
     } else if (this.handle) {
       return this.props.client.product.fetchByHandle(this.handle).then((product) => product);
@@ -572,29 +651,38 @@ export default class Product extends Component {
     } else if (this.options.buttonDestination === 'cart') {
       this.props.closeModal();
       this._userEvent('addVariantToCart');
-      this.props.tracker.trackMethod(this.cart.addVariantToCart.bind(this), 'Update Cart', this.selectedVariantTrackingInfo)(this.selectedVariant, this.model.selectedQuantity);
-      if (this.iframe) {
+      this.props.tracker.trackMethod(this.cart.addVariantToCart.bind(this), 'Update Cart', this.selectedVariantTrackingInfo)(this.selectedVariant, this.selectedQuantity);
+      if (!this.modalProduct) {
         this.props.setActiveEl(target);
       }
     } else if (this.options.buttonDestination === 'modal') {
       this.props.setActiveEl(target);
+      this.props.tracker.track('Open modal', this.productTrackingInfo);
       this.openModal();
     } else if (this.options.buttonDestination === 'onlineStore') {
       this.openOnlineStore();
     } else {
       this._userEvent('openCheckout');
+      this.props.tracker.track('Direct Checkout', {});
       let checkoutWindow;
 
-      if (this.config.cart.popup) {
+      if (this.config.cart.popup && browserFeatures.windowOpen()) {
         const params = (new Checkout(this.config)).params;
-        checkoutWindow = window.open(null, 'checkout', params);
+        checkoutWindow = window.open('', 'checkout', params);
       } else {
         checkoutWindow = window;
       }
+      const input = {
+        lineItems: [
+          {
+            variantId: this.selectedVariant.id,
+            quantity: this.selectedQuantity,
+          },
+        ],
+      };
 
-      this.cart.addVariantToCart(this.selectedVariant, this.model.selectedQuantity, false).then((cart) => {
-        this.cart.close();
-        checkoutWindow.location = cart.webUrl;
+      this.props.client.checkout.create(input).then((checkout) => {
+        checkoutWindow.location = checkout.webUrl;
       });
     }
   }
@@ -744,16 +832,30 @@ export default class Product extends Component {
       this.selectedImage = model.images[0];
     }
 
-    if (selectedVariant) {
-      this.selectedOptions = selectedVariant.selectedOptions.reduce((acc, option) => {
-        acc[option.name] = option.value;
-        return acc;
-      }, {});
-      this.selectedVariant = selectedVariant;
-    } else {
-      // eslint-disable-next-line
-      console.error('invalid variant ID');
+    if (!selectedVariant) {
+      selectedVariant = model.variants[0];
     }
+    this.selectedOptions = selectedVariant.selectedOptions.reduce((acc, option) => {
+      acc[option.name] = option.value;
+      return acc;
+    }, {});
+    this.selectedVariant = selectedVariant;
     return model;
+  }
+
+  imageAltText(altText) {
+    return altText || this.model.title;
+  }
+
+  get priceAccessibilityLabel() {
+    return this.hasCompareAtPrice ? this.options.text.salePriceAccessibilityLabel : this.options.text.regularPriceAccessibilityLabel;
+  }
+
+  get compareAtPriceAccessibilityLabel() {
+    return this.hasCompareAtPrice ? this.options.text.regularPriceAccessibilityLabel : '';
+  }
+
+  get hasCompareAtPrice() {
+    return Boolean(this.selectedVariant && this.selectedVariant.compareAtPriceV2);
   }
 }

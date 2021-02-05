@@ -6,8 +6,13 @@ import Checkout from './checkout';
 import formatMoney from '../utils/money';
 import CartView from '../views/cart';
 import CartUpdater from '../updaters/cart';
+import {addClassToElement} from '../utils/element-class';
+import {removeTrapFocus} from '../utils/focus';
 
 export const NO_IMG_URL = '//sdks.shopifycdn.com/buy-button/latest/no-image.jpg';
+
+const LINE_ITEM_TARGET_SELECTIONS = ['ENTITLED', 'EXPLICIT'];
+const CART_TARGET_SELECTION = 'ALL';
 
 /**
  * Renders and cart embed.
@@ -44,7 +49,7 @@ export default class Cart extends Component {
       return new CartToggle(merge({}, config, toggle), Object.assign({}, this.props, {cart: this}));
     }));
     return Promise.all(this.toggles.map((toggle) => {
-      return toggle.init({lineItems: this.model.lineItems});
+      return toggle.init({lineItems: this.lineItems});
     }));
   }
 
@@ -67,7 +72,16 @@ export default class Cart extends Component {
       [`click ${this.selectors.lineItem.quantityDecrement}`]: this.onQuantityIncrement.bind(this, -1),
       [`click ${this.selectors.cart.button}`]: this.onCheckout.bind(this),
       [`blur ${this.selectors.lineItem.quantityInput}`]: this.onQuantityBlur.bind(this),
+      [`blur ${this.selectors.cart.note}`]: this.setNote.bind(this),
     }, this.options.DOMEvents);
+  }
+
+  /**
+   * get cart line items.
+   * @return {Array} HTML
+   */
+  get lineItems() {
+    return this.model ? this.model.lineItems : [];
   }
 
   /**
@@ -77,11 +91,33 @@ export default class Cart extends Component {
   get lineItemsHtml() {
     return this.lineItemCache.reduce((acc, lineItem) => {
       const data = Object.assign({}, lineItem, this.options.viewData);
+      const fullPrice = data.variant.priceV2.amount * data.quantity;
+      const formattedPrice = formatMoney(fullPrice, this.moneyFormat);
+      const discountAllocations = data.discountAllocations;
+
+      const {discounts, totalDiscount} = discountAllocations.reduce((discountAcc, discount) => {
+        const targetSelection = discount.discountApplication.targetSelection;
+        if (LINE_ITEM_TARGET_SELECTIONS.indexOf(targetSelection) > -1) {
+          const discountAmount = discount.allocatedAmount.amount;
+          const discountDisplayText = discount.discountApplication.title || discount.discountApplication.code;
+          discountAcc.totalDiscount += discountAmount;
+          discountAcc.discounts.push({discount: `${discountDisplayText} (-${formatMoney(discountAmount, this.moneyFormat)})`});
+        }
+        return discountAcc;
+      }, {
+        discounts: [],
+        totalDiscount: 0,
+      });
+      data.discounts = discounts.length > 0 ? discounts : null;
+      data.formattedFullPrice = totalDiscount > 0 ? formattedPrice : null;
+      data.formattedActualPrice = formatMoney(fullPrice - totalDiscount, this.moneyFormat);
+      data.formattedPrice = formattedPrice;
+
       data.classes = this.classes;
+      data.text = this.config.lineItem.text;
       data.lineItemImage = this.imageForLineItem(data);
       data.variantTitle = data.variant.title === 'Default Title' ? '' : data.variant.title;
-      data.formattedPrice = formatMoney(data.variant.price * data.quantity, this.moneyFormat);
-      return acc + this.childTemplate.render({data}, (output) => `<div id="${lineItem.id}" class=${this.classes.lineItem.lineItem}>${output}</div>`);
+      return acc + this.childTemplate.render({data}, (output) => `<li id="${lineItem.id}" class=${this.classes.lineItem.lineItem}>${output}</li>`);
     }, '');
   }
 
@@ -90,12 +126,17 @@ export default class Cart extends Component {
    * @return {Object} viewData object.
    */
   get viewData() {
-    return merge(this.model, this.options.viewData, {
+    const modelData = this.model || {};
+    return merge(modelData, this.options.viewData, {
       text: this.options.text,
       classes: this.classes,
       lineItemsHtml: this.lineItemsHtml,
       isEmpty: this.isEmpty,
       formattedTotal: this.formattedTotal,
+      discounts: this.cartDiscounts,
+      contents: this.options.contents,
+      cartNote: this.cartNote,
+      cartNoteId: this.cartNoteId,
     });
   }
 
@@ -104,7 +145,34 @@ export default class Cart extends Component {
    * @return {String}
    */
   get formattedTotal() {
-    return formatMoney(this.model.subtotalPrice, this.moneyFormat);
+    if (!this.model) {
+      return formatMoney(0, this.moneyFormat);
+    }
+    const total = this.options.contents.discounts ? this.model.subtotalPriceV2.amount : this.model.lineItemsSubtotalPrice.amount;
+    return formatMoney(total, this.moneyFormat);
+  }
+
+  get cartDiscounts() {
+    if (!this.options.contents.discounts || !this.model) {
+      return [];
+    }
+
+    return this.model.discountApplications.reduce((discountArr, discount) => {
+      if (discount.targetSelection === CART_TARGET_SELECTION) {
+        let discountValue = 0;
+        if (discount.value.amount) {
+          discountValue = discount.value.amount;
+        } else if (discount.value.percentage) {
+          discountValue = (discount.value.percentage / 100) * this.model.lineItemsSubtotalPrice.amount;
+        }
+
+        if (discountValue > 0) {
+          const discountDisplayText = discount.title || discount.code;
+          discountArr.push({text: discountDisplayText, amount: `-${formatMoney(discountValue, this.moneyFormat)}`});
+        }
+      }
+      return discountArr;
+    }, []);
   }
 
   /**
@@ -112,11 +180,26 @@ export default class Cart extends Component {
    * @return {Boolean}
    */
   get isEmpty() {
+    if (!this.model) {
+      return true;
+    }
     return this.model.lineItems.length < 1;
+  }
+
+  get cartNote() {
+    return this.model && this.model.note;
+  }
+
+  get cartNoteId() {
+    return `CartNote-${Date.now()}`;
   }
 
   get wrapperClass() {
     return this.isVisible ? 'is-active' : '';
+  }
+
+  get localStorageCheckoutKey() {
+    return `${this.props.client.config.storefrontAccessToken}.${this.props.client.config.domain}.checkoutId`;
   }
 
   imageForLineItem(lineItem) {
@@ -133,15 +216,13 @@ export default class Cart extends Component {
   }
 
   /**
-   * creates a cart instance
-   * @return {Promise} promise resolving to cart instance
+   * sets model to null and removes checkout from localStorage
+   * @return {Promise} promise resolving to the cart model
    */
-  createCheckout() {
-    return this.props.client.checkout.create().then((checkout) => {
-      localStorage.setItem('checkoutId', checkout.id);
-      this.model = checkout;
-      return checkout;
-    });
+  removeCheckout() {
+    this.model = null;
+    localStorage.removeItem(this.localStorageCheckoutKey);
+    return this.model;
   }
 
   /**
@@ -149,16 +230,34 @@ export default class Cart extends Component {
    * @return {Promise} promise resolving to cart instance.
    */
   fetchData() {
-    const checkoutId = localStorage.getItem('checkoutId');
+    const checkoutId = localStorage.getItem(this.localStorageCheckoutKey);
     if (checkoutId) {
       return this.props.client.checkout.fetch(checkoutId).then((checkout) => {
         this.model = checkout;
-        this.updateCache(this.model.lineItems);
-        return checkout;
-      }).catch(() => { return this.createCheckout(); });
+        if (checkout.completedAt) {
+          return this.removeCheckout();
+        }
+        return this.sanitizeCheckout(checkout).then((newCheckout) => {
+          this.updateCache(newCheckout.lineItems);
+          return newCheckout;
+        });
+      }).catch(() => {
+        return this.removeCheckout();
+      });
     } else {
-      return this.createCheckout();
+      return Promise.resolve(null);
     }
+  }
+
+  sanitizeCheckout(checkout) {
+    const lineItemsToDelete = checkout.lineItems.filter((item) => !item.variant);
+    if (!lineItemsToDelete.length) {
+      return Promise.resolve(checkout);
+    }
+    const lineItemIds = lineItemsToDelete.map((item) => item.id);
+    return this.props.client.checkout.removeLineItems(checkout.id, lineItemIds).then((newCheckout) => {
+      return newCheckout;
+    });
   }
 
   fetchMoneyFormat() {
@@ -174,7 +273,7 @@ export default class Cart extends Component {
    * @return {Promise} promise resolving to instance.
    */
   init(data) {
-    if (!this.config.moneyFormat) {
+    if (!this.moneyFormat) {
       this.fetchMoneyFormat().then((moneyFormat) => {
         this.moneyFormat = moneyFormat;
       });
@@ -182,7 +281,8 @@ export default class Cart extends Component {
     return super.init(data)
       .then((cart) => {
         return this.toggles.map((toggle) => {
-          return toggle.init({lineItems: cart.model.lineItems});
+          const lineItems = cart.model ? cart.model.lineItems : [];
+          return toggle.init({lineItems});
         });
       }).then(() => this);
   }
@@ -198,6 +298,7 @@ export default class Cart extends Component {
   close() {
     this.isVisible = false;
     this.view.render();
+    removeTrapFocus(this.view.wrapper);
   }
 
   /**
@@ -206,7 +307,7 @@ export default class Cart extends Component {
   open() {
     this.isVisible = true;
     this.view.render();
-    this.view.setFocus();
+    this.setFocus();
   }
 
   /**
@@ -217,7 +318,7 @@ export default class Cart extends Component {
     this.isVisible = visible || !this.isVisible;
     this.view.render();
     if (this.isVisible) {
-      this.view.setFocus();
+      this.setFocus();
     }
   }
 
@@ -230,6 +331,8 @@ export default class Cart extends Component {
   }
 
   onCheckout() {
+    this._userEvent('openCheckout');
+    this.props.tracker.track('Open cart checkout', {});
     this.checkout.open(this.model.webUrl);
   }
 
@@ -243,6 +346,14 @@ export default class Cart extends Component {
     const item = this.model.lineItems.find((lineItem) => lineItem.id === id);
     const newQty = fn(item.quantity);
     return this.props.tracker.trackMethod(this.updateItem.bind(this), 'Update Cart', this.cartItemTrackingInfo(item, newQty))(id, newQty);
+  }
+
+  setNote(evt) {
+    const note = evt.target.value;
+    return this.props.client.checkout.updateAttributes(this.model.id, {note}).then((checkout) => {
+      this.model = checkout;
+      return checkout;
+    });
   }
 
   /**
@@ -284,7 +395,13 @@ export default class Cart extends Component {
   updateItem(id, quantity) {
     this._userEvent('updateItemQuantity');
     const lineItem = {id, quantity};
-    this.updateCacheItem(id, quantity);
+    const lineItemEl = this.view.document.getElementById(id);
+    if (lineItemEl) {
+      const quantityEl = lineItemEl.getElementsByClassName(this.classes.lineItem.quantity)[0];
+      if (quantityEl) {
+        addClassToElement('is-loading', quantityEl);
+      }
+    }
     return this.props.client.checkout.updateLineItems(this.model.id, [lineItem]).then((checkout) => {
       this.model = checkout;
       this.updateCache(this.model.lineItems);
@@ -311,14 +428,35 @@ export default class Cart extends Component {
       this.open();
     }
     const lineItem = {variantId: variant.id, quantity};
-    return this.props.client.checkout.addLineItems(this.model.id, [lineItem]).then((checkout) => {
-      this.model = checkout;
-      this.updateCache(this.model.lineItems);
-      this.view.render();
-      this.toggles.forEach((toggle) => toggle.view.render());
-      this.view.setFocus();
-      return checkout;
-    });
+    if (this.model) {
+      return this.props.client.checkout.addLineItems(this.model.id, [lineItem]).then((checkout) => {
+        this.model = checkout;
+        this.updateCache(this.model.lineItems);
+        this.view.render();
+        this.toggles.forEach((toggle) => toggle.view.render());
+        if (!openCart) {
+          this.setFocus();
+        }
+        return checkout;
+      });
+    } else {
+      const input = {
+        lineItems: [
+          lineItem,
+        ],
+      };
+      return this.props.client.checkout.create(input).then((checkout) => {
+        localStorage.setItem(this.localStorageCheckoutKey, checkout.id);
+        this.model = checkout;
+        this.updateCache(this.model.lineItems);
+        this.view.render();
+        this.toggles.forEach((toggle) => toggle.view.render());
+        if (!openCart) {
+          this.setFocus();
+        }
+        return checkout;
+      });
+    }
   }
 
   /**
@@ -341,12 +479,20 @@ export default class Cart extends Component {
    */
   cartItemTrackingInfo(item, quantity) {
     return {
-      id: item.variant_id,
+      id: item.variant.id,
+      variantName: item.variant.title,
+      productId: item.variant.product.id,
       name: item.title,
-      sku: null,
-      price: item.price,
+      price: item.variant.priceV2.amount,
       prevQuantity: item.quantity,
       quantity: parseFloat(quantity),
+      sku: null,
     };
+  }
+
+  setFocus() {
+    setTimeout(() => {
+      this.view.setFocus();
+    }, 0);
   }
 }

@@ -12,14 +12,14 @@ const quantityTemplate = `<div class="{{data.classes.product.quantity}} {{data.q
 const buttonTemplate = '<div class="{{data.classes.product.buttonWrapper}}" data-element="product.buttonWrapper"><button {{#data.buttonDisabled}}disabled{{/data.buttonDisabled}} class="{{data.classes.product.button}} {{data.buttonClass}}" data-element="product.button">{{data.buttonText}}</button></div>';
 
 const productTemplate = {
-  img: '{{#data.currentImage.srcLarge}}<div class="{{data.classes.product.imgWrapper}}" data-element="product.imgWrapper"><img data-element="product.img" class="{{data.classes.product.img}}" src="{{data.currentImage.srcLarge}}" /></div>{{/data.currentImage.srcLarge}}',
+  img: '{{#data.currentImage.srcLarge}}<div class="{{data.classes.product.imgWrapper}}" data-element="product.imgWrapper"><img alt="{{data.currentImage.altText}}" data-element="product.img" class="{{data.classes.product.img}}" src="{{data.currentImage.srcLarge}}" /></div>{{/data.currentImage.srcLarge}}',
   imgWithCarousel: `<div class="{{data.classes.product.imgWrapper}}" data-element="product.imageWrapper">
                       <div class="main-image-wrapper">
                         <button type="button" class="carousel-button carousel-button--previous">
                           Left
                           <img class="carousel-button-arrow" src="//sdks.shopifycdn.com/buy-button/latest/arrow.svg" alt="Carousel Arrow"/>
                         </button>
-                        <img class="{{data.classes.product.img}}" src="{{data.currentImage.src}}" data-element="product.img" />
+                        <img class="{{data.classes.product.img}}" alt="{{data.currentImage.altText}}" src="{{data.currentImage.src}}" data-element="product.img" />
                         <button type="button" class="carousel-button carousel-button--next">
                           Right
                           <img class="carousel-button-arrow" src="//sdks.shopifycdn.com/buy-button/latest/arrow.svg" alt="Carousel Arrow"/>
@@ -27,7 +27,7 @@ const productTemplate = {
                       </div>
                       <div class="{{data.classes.product.carousel}}">
                         {{#data.carouselImages}}
-                        <a data-element="product.carouselitem" href="{{src}}" class="{{data.classes.product.carouselItem}} {{#isSelected}} {{data.classes.product.carouselItemSelected}} {{/isSelected}}" data-image-id="{{id}}" style="background-image: url({{carouselSrc}})"></a>
+                        <a data-element="product.carouselitem" aria-label="{{altText}}" href="{{src}}" class="{{data.classes.product.carouselItem}} {{#isSelected}} {{data.classes.product.carouselItemSelected}} {{/isSelected}}" data-image-id="{{id}}" style="background-image: url({{carouselSrc}})"></a>
                         {{/data.carouselImages}}
                       </div>
                     </div>`,
@@ -36,8 +36,18 @@ const productTemplate = {
   options: '{{#data.hasVariants}}<div class="{{data.classes.product.options}}" data-element="product.options">{{{data.optionsHtml}}}</div>{{/data.hasVariants}}',
   price: `<div class="{{data.classes.product.prices}}" data-element="product.prices">
             {{#data.selectedVariant}}
+            <span class="visuallyhidden">{{data.priceAccessibilityLabel}}&nbsp;</span>
             <span class="{{data.classes.product.price}} {{data.priceClass}}" data-element="product.price">{{data.formattedPrice}}</span>
-            {{#data.selectedVariant.compareAtPrice}}<span class="{{data.classes.product.compareAt}}" data-element="product.compareAt">{{data.formattedCompareAtPrice}}</span>{{/data.selectedVariant.compareAtPrice}}
+            {{#data.hasCompareAtPrice}}
+            <span class="visuallyhidden">{{data.compareAtPriceAccessibilityLabel}}&nbsp;</span>
+            <span class="{{data.classes.product.compareAt}}" data-element="product.compareAt">{{data.formattedCompareAtPrice}}</span>
+            {{/data.hasCompareAtPrice}}
+            {{#data.showUnitPrice}}
+            <div class="{{data.classes.product.unitPrice}}" data-element="product.unitPrice">
+              <span class="visuallyhidden">{{data.text.unitPriceAccessibilityLabel}}</span>
+              {{data.formattedUnitPrice}}<span aria-hidden="true">/</span><span class="visuallyhidden">&nbsp;{{data.text.unitPriceAccessibilitySeparator}}&nbsp;</span>{{data.formattedUnitPriceBaseUnit}}
+            </div>
+            {{/data.showUnitPrice}}
             {{/data.selectedVariant}}
           </div>`,
   description: '<div class="{{data.classes.product.description}}" data-element="product.description">{{{data.descriptionHtml}}}</div>',

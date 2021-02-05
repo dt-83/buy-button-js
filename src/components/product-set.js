@@ -82,19 +82,34 @@ export default class ProductSet extends Component {
    * @return {Object|Array}
    */
   get trackingInfo() {
+    const contents = this.config.product.contents;
+    const contentString = Object.keys(contents).filter((key) => contents[key]).toString();
+
+    const config = {
+      destination: this.config.product.buttonDestination,
+      layout: this.config.product.layout,
+      contents: contentString,
+      checkoutPopup: this.config.cart.popup,
+    };
+
     if (isArray(this.id)) {
       return this.model.products.map((product) => {
-        return {
+        const variant = product.variants[0];
+        return Object.assign({}, config, {
           id: product.id,
-          name: product.selectedVariant.title,
-          price: product.selectedVariant.price,
+          name: product.title,
+          variantId: variant.id,
+          variantName: variant.title,
+          price: variant.priceV2.amount,
           sku: null,
-        };
+          isProductSet: true,
+        });
       });
     }
-    return {
-      id: this.id,
-    };
+
+    return Object.assign(config, {
+      id: this.storefrontId,
+    });
   }
 
   /**
@@ -106,6 +121,7 @@ export default class ProductSet extends Component {
    */
   init(data) {
     const cartConfig = Object.assign({}, this.globalConfig, {
+      node: this.globalConfig.cartNode,
       options: this.config,
     });
 
@@ -209,6 +225,10 @@ export default class ProductSet extends Component {
       }),
     });
 
+    if (this.config.productSet.iframe === false) {
+      productConfig.node = this.node.querySelector(`.${this.classes.productSet.products}`);
+    }
+
     const promises = this.model.products.map((productModel) => {
       const product = new Product(productConfig, this.props);
       this.products.push(product);
@@ -217,7 +237,12 @@ export default class ProductSet extends Component {
 
     return Promise.all(promises).then(() => {
       this.view.resizeUntilFits();
-      this.showPagination();
+      const hasPagination = this.model.products[0].hasOwnProperty('hasNextPage');
+
+      if (this.options.contents.pagination && hasPagination) {
+        this.showPagination();
+      }
+
       return this;
     });
   }
